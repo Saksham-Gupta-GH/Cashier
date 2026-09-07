@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import { toast } from "sonner";
 import { useLoginMutation } from "../features/auth/authApi";
 import { getTerminal, clearTerminal } from "../lib/terminal";
+import { appConfirm } from "../services/appDialog";
 
 export default function Login({ onUsePinLogin }) {
   const [email, setEmail] = useState("");
@@ -98,8 +99,8 @@ export default function Login({ onUsePinLogin }) {
             </div>
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm("Unpair this terminal? You'll need a new pairing code.")) {
+              onClick={async () => {
+                if (await appConfirm({ title: "Unpair this terminal?", message: "You'll need a new pairing code before this device can be used again.", confirmLabel: "Unpair" })) {
                   clearTerminal();
                   window.location.reload();
                 }

@@ -13,6 +13,7 @@ import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useGetClockInOptionsQuery, useClockInMutation } from "../features/auth/authApi";
 import { getTerminal, clearTerminal } from "../lib/terminal";
+import { appConfirm } from "../services/appDialog";
 
 const PIN_LENGTH = 4; // accept 4–6 server-side; UX optimised for 4
 
@@ -91,8 +92,8 @@ export default function ClockIn({ onUseEmailLogin }) {
         }}
       >
         {/* Header — terminal + location */}
-        <TerminalBar terminal={terminal} onSwitch={() => {
-          if (window.confirm("Unpair this terminal?")) {
+        <TerminalBar terminal={terminal} onSwitch={async () => {
+          if (await appConfirm({ title: "Unpair this terminal?", message: "This device will need a new pairing code before it can be used again.", confirmLabel: "Unpair" })) {
             clearTerminal();
             window.location.reload();
           }

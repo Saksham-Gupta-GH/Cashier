@@ -13,6 +13,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { appConfirm } from "../../services/appDialog";
 import { Icon } from "./Icon";
 import { useLazyValidateDiscountCodeQuery } from "../../features/discount/discountApi";
 import { useLazyLookupGiftCardQuery } from "../../features/vouchers/voucherApi";
@@ -308,9 +309,9 @@ function CheckInPaymentModal({
     }
     setManagerOpen(true);
   };
-  const handleVoid = () => {
+  const handleVoid = async () => {
     if (isSubmitting || gcRedeeming || complete) return;
-    const ok = window.confirm("Void this transaction? No payment will be recorded.");
+    const ok = await appConfirm({ title: "Void this transaction?", message: "No payment will be recorded.", confirmLabel: "Void transaction" });
     if (!ok) return;
     if (typeof onVoid === "function") {
       onVoid();

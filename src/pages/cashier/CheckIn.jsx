@@ -7,6 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { appConfirm } from "../../services/appDialog";
 import { Icon } from "./Icon";
 import { StatusPill } from "./StatusPill";
 import { CashierScreenBoundary } from "./CashierScreenBoundary";
@@ -1231,7 +1232,7 @@ function SelectedBookingDetail({ booking, onCheckedIn }) {
   };
 
   const handleUnlinkParticipant = async (participantId) => {
-    if (!window.confirm("Remove this guest from the booking? Their tickets stay on the booking and can be re-assigned.")) return;
+    if (!await appConfirm({ title: "Remove this guest?", message: "Their tickets will stay on the booking and can be reassigned.", confirmLabel: "Remove" })) return;
     const promise = removeParticipant({ bookingId: booking.bookingId, participantId }).unwrap();
     toast.promise(promise, {
       loading: "Removing…",

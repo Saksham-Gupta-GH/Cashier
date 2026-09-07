@@ -17,6 +17,7 @@ import ClockIn from "./pages/ClockIn";
 import PairTerminal from "./pages/PairTerminal";
 import { getTerminal } from "./lib/terminal";
 import { logout } from "./features/auth/authSlice";
+import AppDialogHost from "./components/AppDialogHost";
 
 export default function App() {
   const token = useSelector((s) => s.auth?.token);
@@ -133,6 +134,7 @@ export default function App() {
         </div>
       ) : null}
       {body}
+      <AppDialogHost />
       <Toaster
         position="top-center"
         richColors
