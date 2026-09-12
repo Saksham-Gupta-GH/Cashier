@@ -1,4 +1,4 @@
-// Card-terminal payment modal (Stripe Terminal, server-driven).
+// Card-terminal payment modal (Nuvei or Stripe, server-driven).
 //
 // Drives the backend terminal flow and shows live status:
 //   start  → "Waiting for card…"   (reader prompts the customer)
@@ -11,8 +11,8 @@
 // record a payment (that would double-charge).
 //
 // Reader: not passed — the backend resolves the location's configured reader
-// (Payments → Card terminals). Currency optional: pass the location's Stripe
-// account currency (a US account needs USD even for a CAD location).
+// (Payments -> Card terminals). Currency must match the sale; unsupported
+// account currencies are rejected rather than silently converted.
 
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -27,9 +27,10 @@ import { useTipDefaults } from "../../features/tips/useTipDefaults";
 import { useCheckTipOverrideMutation } from "../../features/tips/tipsApi";
 import { TIP_ALLOCATIONS } from "../../features/tips/tipMath";
 import ManagerOverridePrompt from "../../components/ManagerOverridePrompt";
+import { attemptStorageKey, readAttempt, terminalOutcome } from "../../features/payments/terminalAttempt";
 
 const POLL_MS = 2500;
-const TIMEOUT_MS = 90000; // give up waiting for the tap after 90s
+const TIMEOUT_MS = 90000; // request cancellation, then reconcile until confirmed
 
 function newIdempotencyKey(sourceType, sourceId) {
   const rnd = Math.random().toString(36).slice(2, 10);
@@ -71,6 +72,27 @@ export default function TerminalPaymentModal({
   // Guards against two async paths (a late poll + the timeout handler) both
   // resolving the payment and firing onApproved twice.
   const doneRef = useRef(false);
+  const attemptRef = useRef(null);
+  const activeRef = useRef(true);
+  const [cancelling, setCancelling] = useState(false);
+  const storageKey = attemptStorageKey({ locationId, sourceType, sourceId });
+  useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
+
+  const forgetAttempt = () => { sessionStorage.removeItem(storageKey); attemptRef.current = null; };
+  const acceptResult = (result) => {
+    const outcome = terminalOutcome(result);
+    if (outcome === "waiting") return false;
+    if (doneRef.current) return true;
+    doneRef.current = true;
+    clearTimers();
+    if (outcome !== "review") forgetAttempt();
+    setPhase(outcome === "review" ? "error" : outcome);
+    setMessage(outcome === "approved" ? "Payment approved." : outcome === "declined"
+      ? "Payment was declined. The order is saved; you can retry payment."
+      : outcome === "review" ? "This payment has been refunded. Review the order before taking payment." : "Cancellation confirmed. You can retry payment.");
+    if (outcome === "approved") onApproved?.(result);
+    return true;
+  };
 
   const [startPayment] = useStartTerminalPaymentMutation();
   const [triggerStatus] = useLazyGetTerminalStatusQuery();
@@ -90,7 +112,7 @@ export default function TerminalPaymentModal({
   const collectTip = !tipOnly && !!tipDefaults.enabled && !(tip && tip.allocation);
 
   function clearTimers() {
-    if (pollRef.current) clearInterval(pollRef.current);
+    if (pollRef.current) clearTimeout(pollRef.current);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     pollRef.current = null;
     timeoutRef.current = null;
@@ -103,12 +125,13 @@ export default function TerminalPaymentModal({
     startedRef.current = true;
     setPhase("starting");
     try {
-      const res = await startPayment({
+      const saved = attemptRef.current || readAttempt(sessionStorage, storageKey);
+      const request = saved?.request || {
         locationId,
         amount: Number(amount),
         currency: currency || undefined,
         posDeviceId: posDeviceId || undefined,
-        readerId: readerId || undefined,
+        terminalId: Number.isInteger(Number(readerId)) && Number(readerId) > 0 ? Number(readerId) : undefined,
         sourceType,
         sourceId,
         // On-glass tip: forwarded only when an allocation was chosen
@@ -118,13 +141,35 @@ export default function TerminalPaymentModal({
         // recipient on metadata.tip; the backend tip finalizer records it.
         ...(tipOnly ? { metadata: { tip: tipOnly } } : {}),
         idempotencyKey: newIdempotencyKey(sourceType, sourceId),
-      }).unwrap();
-      setTransactionId(res.transaction?.transactionId || res.transactionId);
+      };
+      attemptRef.current = saved || { request };
+      sessionStorage.setItem(storageKey, JSON.stringify(attemptRef.current));
+      const res = saved?.transactionId
+        ? await triggerStatus(saved.transactionId).unwrap()
+        : await startPayment(request).unwrap();
+      const id = res.transaction?.transactionId || res.transactionId;
+      attemptRef.current = { request, transactionId: id };
+      sessionStorage.setItem(storageKey, JSON.stringify(attemptRef.current));
+      if (!activeRef.current) return;
+      setTransactionId(id);
+      if (acceptResult(res)) return;
       setPhase("waiting");
       setMessage(res.instructions || "Ask the customer to tap their card on the reader.");
     } catch (err) {
+      if (!activeRef.current) return;
+      const detail = err?.data?.detail;
+      if (detail?.status === "failed") {
+        forgetAttempt();
+      } else if (err?.data?.error === "terminal_payment_pending" && detail?.transactionId) {
+        attemptRef.current = { ...attemptRef.current, transactionId: detail.transactionId };
+        sessionStorage.setItem(storageKey, JSON.stringify(attemptRef.current));
+        setTransactionId(detail.transactionId);
+        setPhase("waiting");
+        setMessage("Checking the previous card payment. No new charge was started.");
+        return;
+      }
       setPhase("error");
-      setMessage(err?.data?.message || err?.data?.error || err?.error || "Could not start the terminal payment.");
+      setMessage(err?.data?.message || "Could not confirm the payment result. Check again to recover this attempt without sending a duplicate charge.");
     }
   };
 
@@ -189,41 +234,35 @@ export default function TerminalPaymentModal({
     clearTimers();
     let errorStreak = 0;
 
-    // Resolve the modal exactly once. Both a late poll and the timeout handler
-    // can race; doneRef makes the first one win and onApproved fire only once.
-    const resolve = (next, msg, payload) => {
-      if (doneRef.current) return;
-      doneRef.current = true;
-      clearTimers();
-      setPhase(next);
-      if (msg) setMessage(msg);
-      if (next === "approved") onApproved?.(payload);
-    };
-
     const readStatus = async () => {
       const r = await triggerStatus(transactionId).unwrap();
       return { status: r.transaction?.status || r.status, r };
     };
 
+    let stopped = false;
+    let slowPolling = false;
     const poll = async () => {
       try {
-        const { status, r } = await readStatus();
+        const { r } = await readStatus();
+        if (stopped || !activeRef.current) return;
         errorStreak = 0;
-        if (status === "captured") {
-          resolve("approved", "Payment approved.", r);
-        } else if (status === "cancelled") {
-          resolve("cancelled", r.reason || "Payment was cancelled.", r);
-        } else if (["failed", "voided"].includes(status)) {
-          resolve("declined", r.error?.message || "The card was declined.");
+        if (acceptResult(r)) return;
+        if (r.reviewRequired) {
+          slowPolling = true;
+          setMessage(r.message || "Payment outcome is unknown. Review this attempt before starting another payment.");
         }
         // else still processing — keep polling
       } catch {
+        if (stopped || !activeRef.current) return;
         errorStreak += 1;
         // Don't kill the payment on a transient blip, but stop pretending all
         // is well after several consecutive failures.
         if (errorStreak >= 5 && !doneRef.current) {
+          slowPolling = true;
           setMessage("Trouble reaching the reader — still trying…");
         }
+      } finally {
+        if (!stopped && !doneRef.current) pollRef.current = setTimeout(poll, slowPolling ? 10000 : POLL_MS);
       }
     };
 
@@ -231,50 +270,53 @@ export default function TerminalPaymentModal({
     // FINAL status check — if the customer tapped just before we gave up, the
     // payment may already be captured and we must honor it (money moved).
     const onTimeout = async () => {
-      clearTimers();
-      if (doneRef.current) return;
+      if (doneRef.current || stopped || !activeRef.current) return;
+      slowPolling = true;
       try {
-        await cancelPayment({ transactionId, reason: "timed out waiting for card" }).unwrap();
+        const result = await cancelPayment({ transactionId, reason: "timed out waiting for card" }).unwrap();
+        if (stopped || !activeRef.current) return;
+        if (acceptResult(result)) return;
       } catch {
         /* may already be captured/cancelled — the final check below decides */
       }
       try {
-        const { status, r } = await readStatus();
-        if (status === "captured") return resolve("approved", "Payment approved.", r);
-        if (status === "cancelled") {
-          return resolve("cancelled", r.reason || "Payment was cancelled.", r);
-        }
-        if (["failed", "voided"].includes(status)) {
-          return resolve("declined", r.error?.message || "The card was declined.");
-        }
+        const { r } = await readStatus();
+        if (stopped || !activeRef.current) return;
+        if (acceptResult(r)) return;
       } catch {
         /* fall through to the error state */
       }
-      if (doneRef.current) return;
-      doneRef.current = true;
-      setPhase("error");
-      setMessage("Timed out waiting for the card — the payment was cancelled. You can start it again.");
+      if (doneRef.current || stopped || !activeRef.current) return;
+      setMessage("Cancellation is not confirmed. Still checking the previous payment; do not charge again yet.");
     };
 
-    pollRef.current = setInterval(poll, POLL_MS);
     timeoutRef.current = setTimeout(onTimeout, TIMEOUT_MS);
     poll(); // immediate first check
 
-    return () => clearTimers();
+    return () => { stopped = true; clearTimers(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, transactionId]);
 
   async function handleCancel() {
-    clearTimers();
-    doneRef.current = true; // stop any in-flight poll from also resolving
+    if (phase === "starting" || cancelling) return;
+    setCancelling(true);
     if (transactionId && (phase === "waiting" || phase === "error")) {
       try {
-        await cancelPayment({ transactionId, reason: "cashier cancelled" }).unwrap();
+        const result = await cancelPayment({ transactionId, reason: "cashier cancelled" }).unwrap();
+        if (!activeRef.current) return;
+        if (!acceptResult(result)) {
+          setMessage("Cancellation is not confirmed. Checking the previous payment before retrying.");
+          setCancelling(false);
+          return;
+        }
+        if (terminalOutcome(result) === "approved") return;
       } catch {
-        /* best-effort */
+        setMessage("Could not confirm cancellation. The payment may still complete; check again before retrying.");
+        setCancelling(false);
+        return;
       }
     }
-    setPhase("cancelled");
+    clearTimers();
     onClose?.();
   }
 
@@ -283,7 +325,7 @@ export default function TerminalPaymentModal({
   const tone =
     phase === "approved" ? "#16A34A" :
     phase === "declined" || phase === "error" ? "#DC2626" :
-    "var(--aero-yellow-300, #FF8A00)";
+    "#FF8A00";
   const heading =
     phase === "starting" ? "Starting…" :
     phase === "waiting" ? "Waiting for card" :
@@ -307,12 +349,12 @@ export default function TerminalPaymentModal({
       }}
       onClick={(e) => { if (e.target === e.currentTarget && phase !== "waiting" && phase !== "starting") onClose?.(); }}
     >
-      <div style={{ width: 380, maxWidth: "100%", background: "white", borderRadius: 16, padding: 24, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+      <div style={{ width: 380, maxWidth: "100%", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", boxSizing: "border-box", background: "white", borderRadius: 16, padding: 24, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
         <div style={{ fontSize: 13, color: "var(--ink-500, #64748B)", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" }}>
           Card terminal
         </div>
         <div style={{ fontSize: 30, fontWeight: 900, margin: "4px 0 16px", fontFamily: "var(--font-display)" }}>
-          {moneyFmt(amount)}{currency ? ` ${String(currency).toUpperCase()}` : ""}
+          {moneyFmt(attemptRef.current?.request?.amount ?? amount)}{currency ? ` ${String(currency).toUpperCase()}` : ""}
         </div>
 
         {phase === "tip" ? (
@@ -377,7 +419,15 @@ export default function TerminalPaymentModal({
           {message}
         </p>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {phase === "waiting" && <button type="button" className="a-btn" disabled={cancelling}
+            onClick={() => { clearTimers(); onClose?.(); }}>Leave pending</button>}
+          {["error", "declined", "cancelled"].includes(phase) && (
+            <button type="button" className="a-btn a-btn--primary" onClick={() => {
+              startedRef.current = false; doneRef.current = false; setCancelling(false);
+              beginStart(tip && tip.allocation ? tip : null);
+            }}> {phase === "error" ? "Check / retry payment" : "Retry payment"} </button>
+          )}
           {phase === "approved" ? (
             <button type="button" className="a-btn a-btn--primary" onClick={() => onClose?.()}
               style={{ flex: 1, justifyContent: "center", minHeight: 48 }}>
@@ -386,8 +436,9 @@ export default function TerminalPaymentModal({
           ) : (
             <button type="button" className="a-btn"
               onClick={handleCancel}
+              disabled={phase === "starting" || cancelling}
               style={{ flex: 1, justifyContent: "center", minHeight: 48, border: "1px solid var(--ink-200,#e2e8f0)", background: "white" }}>
-              {phase === "waiting" || phase === "starting" ? "Cancel" : "Close"}
+              {cancelling ? "Checking cancellation..." : phase === "waiting" || phase === "starting" ? "Cancel payment" : "Close"}
             </button>
           )}
         </div>

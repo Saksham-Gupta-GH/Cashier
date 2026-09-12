@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body>
+<div id="root"></div>
+<script>
+  window.testFixture = new URLSearchParams(location.search).get("fixture") || "terminal";
+  localStorage.setItem("cashier:terminal", JSON.stringify({ deviceId: 4, locationId: 3, settings: { enableTipping: false } }));
+</script>
+<script type="module" src="./terminal-harness.jsx"></script>
+</body></html>

@@ -11,6 +11,11 @@ import { createSlice, nanoid } from "@reduxjs/toolkit";
 
 const EMPTY_BENEFITS = { promo: null, member: null, vouchers: [], payments: [] };
 
+export function checkoutCartSignature(state) {
+  return JSON.stringify({ items: state.items, customer: state.cartCustomer,
+    waivers: state.waiversAttached, assignments: state.ticketAssignments, benefits: state.appliedBenefits });
+}
+
 const initialState = {
   items: [],
   cartCustomer: null,
@@ -25,6 +30,7 @@ const initialState = {
   // (so a duplicate createBooking on flaky wifi is deduped by the backend),
   // rotated on success or when the cashier explicitly clears the cart.
   checkoutKey: null,
+  checkoutSnapshot: null,
 };
 
 const cartSlice = createSlice({
@@ -53,11 +59,14 @@ const cartSlice = createSlice({
     ensureCheckoutKey: (state) => {
       if (!state.checkoutKey) {
         state.checkoutKey = `co_${nanoid()}`;
+        state.checkoutSnapshot = checkoutCartSignature(state);
       }
+      if (!state.checkoutSnapshot) state.checkoutSnapshot = checkoutCartSignature(state);
     },
     // After a successful booking, rotate so the next checkout gets a new key.
     rotateCheckoutKey: (state) => {
       state.checkoutKey = null;
+      state.checkoutSnapshot = null;
     },
     clearCart: () => initialState,
   },

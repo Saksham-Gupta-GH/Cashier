@@ -1,5 +1,7 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import Cookies from "js-cookie";
+import { resolveCashierLocationId } from "../lib/locationContext";
+import { getTerminal } from "../lib/terminal";
 
 // Reads the API base from Vite env at build time:
 //   VITE_API_BASE_URL=http://localhost:5171/api/cashier
@@ -9,6 +11,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/cashier";
 
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: API_BASE_URL,
+  credentials: "include",
   prepareHeaders: (headers, { getState }) => {
     headers.set("X-Client-App", "cashier");
     const token = getState()?.auth?.token;
@@ -23,14 +26,12 @@ const rawBaseQuery = fetchBaseQuery({
 // cookie (set during login) if the tablet isn't paired yet.
 const baseQueryWithLocation = async (args, api, extraOptions) => {
   const requestUrl = typeof args === "string" ? args : args?.url || "";
-  let locationId = null;
   const state = api.getState?.();
-  locationId = state?.auth?.locations?.[0]?.locationId || null;
-  try {
-    const t = JSON.parse(localStorage.getItem("cashier:terminal") || "null");
-    if (!locationId) locationId = t?.locationId || null;
-  } catch { /* noop */ }
-  if (!locationId) locationId = Cookies.get("locationId") || null;
+  const locationId = resolveCashierLocationId({
+    pairedTerminal: getTerminal(),
+    authLocations: state?.auth?.locations,
+    cookieLocationId: Cookies.get("locationId"),
+  });
 
   if (locationId && requestUrl !== "/pos/pair") {
     if (typeof args === "string") {

@@ -9,7 +9,7 @@
 
 import React, { useCallback, useMemo, useState, useEffect } from "react";
 import Cookies from "js-cookie";
-import { useDispatch, useSelector } from "react-redux";
+import { useDispatch, useSelector, useStore } from "react-redux";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { baseApi } from "../../api/baseApi";
@@ -77,6 +77,7 @@ import {
   setTicketAssignments as setTicketAssignmentsAction,
   setAppliedBenefits as setAppliedBenefitsAction,
   ensureCheckoutKey,
+  checkoutCartSignature,
   rotateCheckoutKey,
   clearCart,
 } from "../../features/cart/cartSlice";
@@ -759,6 +760,7 @@ export function CashierApp() {
   // unmounts on tab change (it's the parent of <Routes>), so all the cart
   // useState below survives navigation between Sell ↔ Check-in ↔ Find etc.
   const navigate = useNavigate();
+  const reduxStore = useStore();
   const location = useLocation();
   const screen = (location.pathname.split("/")[1] || "sell").toLowerCase();
   const setScreen = (id) => navigate(`/${id}`);
@@ -1503,6 +1505,7 @@ export function CashierApp() {
     // one yet. Reused across retries (so the backend can dedupe a double-
     // submit on flaky wifi), rotated on successful completion.
     dispatch(ensureCheckoutKey());
+    const activeCheckoutKey = reduxStore.getState().cart.checkoutKey;
 
     const primaryGuest = cartCustomer || waiversAttached[0] || null;
     // Sell-screen mode drives the waiver policy:
@@ -1599,7 +1602,7 @@ export function CashierApp() {
     // two bookings under "Walk-in A7B2" and "Walk-in 9F3K". Derive from the
     // checkoutKey (which itself is stable across retries) so the same cart
     // attempt always produces the same name.
-    const walkInSuffix = (cart.checkoutKey || "anon").slice(-4).toUpperCase();
+    const walkInSuffix = (activeCheckoutKey || "anon").slice(-4).toUpperCase();
     const guestName =
       primaryGuest?.name ||
       member?.name ||
@@ -1787,7 +1790,8 @@ export function CashierApp() {
         // Snapshot the checkout key into the draft so completeDraftCheckout
         // reads from a stable source even if Redux state changes between
         // payment-dialog mount and submit.
-        checkoutKey: cart.checkoutKey,
+        checkoutKey: activeCheckoutKey,
+        checkoutCartChanged: reduxStore.getState().cart.checkoutSnapshot !== checkoutCartSignature(reduxStore.getState().cart),
         // Per-voucher pricing allocations precomputed alongside the regular
         // booking so all lines together sum exactly to the cart total (no
         // penny drift). One entry per voucher UNIT (qty expanded), matching
@@ -2499,6 +2503,11 @@ export function CashierApp() {
           open={!!paymentBooking}
           draftPayment={paymentBooking}
           onClose={() => setPaymentBooking(null)}
+          onSeparateSale={() => {
+            dispatch(rotateCheckoutKey());
+            setPaymentBooking(null);
+            toast.info("Previous order preserved. Review the current cart, then take payment for this separate sale.");
+          }}
           onVoid={() => {
             dispatch(clearCart());
             setPaymentBooking(null);

@@ -7,7 +7,7 @@
 // abort -- the cancel race window (cardholder taps at the same time)
 // is handled by the backend and surfaces as captured here.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import {
   useGetTerminalPaymentStatusQuery,
@@ -38,10 +38,12 @@ export default function TerminalProgressModal({
   const [secondsElapsed, setSecondsElapsed] = useState(0);
   const [cancelling, setCancelling] = useState(false);
   const [dots, setDots] = useState(".");
+  const finished = useRef(false);
+  const [notice, setNotice] = useState("");
 
   const { data, error } = useGetTerminalPaymentStatusQuery(transactionId, {
-    pollingInterval: POLL_MS,
-    skip: !transactionId,
+    pollingInterval: secondsElapsed >= MAX_SECONDS ? 10000 : POLL_MS,
+    skip: !transactionId || finished.current,
   });
   const [cancelTerminalPayment] = useCancelTerminalPaymentMutation();
 
@@ -61,6 +63,8 @@ export default function TerminalProgressModal({
     const status = data.status || data?.data?.status;
     if (!status) return;
     if (!FINAL_STATES.has(status)) return;
+    if (finished.current) return;
+    finished.current = true;
     if (status === "captured") {
       onComplete?.(data);
     } else if (status === "cancelled") {
@@ -73,7 +77,7 @@ export default function TerminalProgressModal({
   // Hard timeout safety net.
   useEffect(() => {
     if (secondsElapsed >= MAX_SECONDS) {
-      onFailed?.("Card payment timed out after " + MAX_SECONDS + " seconds.");
+      setNotice("This payment is taking longer than expected. Still checking; no new charge will be sent.");
     }
   }, [secondsElapsed, onFailed]);
 
@@ -89,9 +93,12 @@ export default function TerminalProgressModal({
       // Handle race: backend reports status=captured if customer tapped
       // before our cancel landed (cancelRaced=true). Honour it.
       if (result?.status === "captured") {
-        onComplete?.(result);
+        if (!finished.current) { finished.current = true; onComplete?.(result); }
+      } else if (result?.status === "cancelled" || result?.status === "voided") {
+        if (!finished.current) { finished.current = true; onCancelled?.("cashier_cancel"); }
       } else {
-        onCancelled?.("cashier_cancel");
+        setNotice("Cancellation is not confirmed. Checking the previous payment before another attempt.");
+        setCancelling(false);
       }
     } catch (err) {
       // Cancel failed -- back to polling. The cashier can try again or
@@ -127,6 +134,7 @@ export default function TerminalProgressModal({
             Polling error -- retrying. The sale may still complete on the terminal.
           </div>
         )}
+        {notice && <p role="status" className="mt-4 text-sm text-gray-700">{notice}</p>}
 
         <button
           type="button"

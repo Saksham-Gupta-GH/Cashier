@@ -7,13 +7,9 @@
 //   • Check-in:  an EXISTING booking that already has a balance.
 //   • Sell:      a CART that doesn't have a backend booking yet.
 //
-// This overlay preserves the "no booking until paid" guarantee — the
-// backend booking is NEVER created until the cashier actually
-// completes payment. While the modal is open we feed CheckInPaymentModal
-// a synthetic display-only booking object built from the cart draft
-// (totals come from the cart's pricingSummary). On Complete we make
-// ONE atomic createBooking call carrying the payment payload, so if
-// the cashier closes without paying nothing lands in the backend.
+// Before submission the modal displays cart totals without creating a booking.
+// Terminal collection saves the booking before dispatching the card request.
+// Later retries recover that saved order and its unresolved payment first.
 //
 // Multi-booking split for voucher_pack / membership / etc. is preserved
 // inside the atomic create+pay loop — the main booking gets the
@@ -37,6 +33,7 @@ import CheckInPaymentModal from "./CheckInPaymentModal";
 import TerminalPaymentModal from "./TerminalPaymentModal";
 import TerminalProgressModal from "./TerminalProgressModal";
 import { useTipDefaults } from "../../features/tips/useTipDefaults";
+import { useLazyRecoverTerminalCheckoutQuery } from "../../features/payments/terminalApi";
 
 export default function SellPaymentOverlay({
   open,
@@ -44,6 +41,7 @@ export default function SellPaymentOverlay({
   onClose,           // () => void — cashier dismissed without paying
   onComplete,        // (paymentComplete) => void — payment recorded; cart can be cleared
   onVoid,            // () => void — cashier voided the pre-payment transaction
+  onSeparateSale,
 }) {
   // ── Payment-form state (mirrors CheckIn.jsx's parent-owned state) ─
   const [paymentMethod, setPaymentMethod] = useState("card");
@@ -56,6 +54,7 @@ export default function SellPaymentOverlay({
   // After atomic create+pay we know the real bookingId — store it so
   // receipt actions (print / email) can target the right booking.
   const [paidBooking, setPaidBooking] = useState(null);
+  const [checkoutConflict, setCheckoutConflict] = useState(null);
   // On-glass card tip: the allocation the cashier picked on the payment
   // screen, handed to the card reader so the guest's tip is recorded to it.
   const tipDefaults = useTipDefaults();
@@ -66,6 +65,7 @@ export default function SellPaymentOverlay({
   const [recordPayment, { isLoading: recordingExtra }] = useRecordPaymentMutation();
   const [redeemGiftCard, { isLoading: gcRedeeming }] = useRedeemGiftCardMutation();
   const [sendBookingConfirmation, { isLoading: sendingReceipt }] = useSendBookingConfirmationMutation();
+  const [recoverCheckout, { isFetching: recovering }] = useLazyRecoverTerminalCheckoutQuery();
 
   // ── Idempotency / re-entry guards ─────────────────────────────────
   const paymentLockRef = useRef(false);
@@ -133,11 +133,48 @@ export default function SellPaymentOverlay({
   const balanceDue = roundMoney(
     Math.max(
       0,
-      Number(displayBooking?.totalAmount || 0) -
-        Number(displayBooking?.voucherCoveredAmount || 0)
+      displayBooking?.balanceDue ?? (Number(displayBooking?.totalAmount || 0) -
+        Number(displayBooking?.voucherCoveredAmount || 0))
     )
   );
   const fullyCovered = balanceDue < 0.005;
+
+  const checkoutRecoveryKey = draftPayment?.draft?.checkoutKey
+    ? `${draftPayment.draft.checkoutKey}:main` : null;
+
+  const resumeSavedOrder = async () => {
+    if (!checkoutRecoveryKey) return false;
+    const result = await recoverCheckout(checkoutRecoveryKey).unwrap();
+    if (!result.booking) return false;
+    const saved = result.booking;
+    if (draftPayment?.draft?.checkoutCartChanged ||
+        Math.abs(Number(saved.totalAmount) - Number(draftPayment.totalAmount)) > 0.005) {
+      setCheckoutConflict(saved);
+      setTerminalPayment(null);
+      return true;
+    }
+    if (saved.status === "cancelled") throw new Error("This order was cancelled. Start a new sale after reviewing the saved order.");
+    const changed = !paidBooking?.bookingId || Number(saved.balanceDue) !== balanceDue;
+    setPaidBooking({ ...(syntheticBooking || {}), ...saved });
+    if (result.pendingPayment) {
+      setPendingTerminal({ ...result.pendingPayment, bookingId: saved.bookingId,
+        bookingNumber: saved.bookingNumber, instructions: "Checking the previous card payment. No new charge has been sent." });
+      return true;
+    }
+    if (saved.balanceDue <= 0) {
+      setPaymentComplete({ bookingId: saved.bookingId, bookingNumber: saved.bookingNumber,
+        amountPaid: saved.totalAmount, paymentMethod: "card", balanceRemaining: 0 });
+      toast.success(`Order ${saved.bookingNumber} is already paid. No new payment was taken.`);
+      return true;
+    }
+    if (changed) {
+      setPaymentAmount(Number(saved.balanceDue).toFixed(2));
+      setPaymentDiscount(null);
+      toast.info(`Continuing saved order ${saved.bookingNumber}: ${moneyFmt(saved.balanceDue)} due. Review the order before taking payment.`);
+      return true;
+    }
+    return false;
+  };
 
   // ── Initial amount when the overlay opens ────────────────────────
   useEffect(() => {
@@ -160,6 +197,7 @@ export default function SellPaymentOverlay({
     setPendingTerminal(null);
     setTerminalPayment(null);
     setPaidBooking(null);
+    setCheckoutConflict(null);
     paymentLockRef.current = false;
     paymentSessionRef.current = null;
   }, [open]);
@@ -422,6 +460,15 @@ export default function SellPaymentOverlay({
   // ── Submit handlers (mirror CheckIn.jsx) ─────────────────────────
   const handleRecordPayment = async () => {
     if (paymentComplete || paymentLockRef.current) return;
+    paymentLockRef.current = true;
+    try {
+      if (await resumeSavedOrder()) return;
+    } catch (err) {
+      toast.error(err?.data?.message || err.message || "Could not check the saved order. Please retry.");
+      return;
+    } finally {
+      paymentLockRef.current = false;
+    }
     const paymentSessionKey = ensurePaymentSessionKey();
     const discountAmount = roundMoney(Math.min(Number(paymentDiscount?.amount || 0), balanceDue));
     const payableBalance = roundMoney(Math.max(0, balanceDue - discountAmount));
@@ -597,6 +644,15 @@ export default function SellPaymentOverlay({
   // contract.
   const handleGiftCardPayment = async ({ code, pin, amount }) => {
     if (paymentComplete || paymentLockRef.current) return;
+    paymentLockRef.current = true;
+    try {
+      if (await resumeSavedOrder()) return;
+    } catch (err) {
+      toast.error(err?.data?.message || err.message || "Could not check the previous payment.");
+      return;
+    } finally {
+      paymentLockRef.current = false;
+    }
     const paymentSessionKey = ensurePaymentSessionKey();
     const discountAmount = roundMoney(Math.min(Number(paymentDiscount?.amount || 0), balanceDue));
     const payable = roundMoney(Math.max(0, balanceDue - discountAmount));
@@ -722,6 +778,10 @@ export default function SellPaymentOverlay({
     }
   };
   const handleVoid = () => {
+    if (paidBooking?.bookingId || terminalPayment || pendingTerminal) {
+      toast.info("This order is already saved. Use booking management to cancel it after checking its payments.");
+      return;
+    }
     setPendingTerminal(null);
     setTerminalPayment(null);
     setPaymentComplete(null);
@@ -734,6 +794,19 @@ export default function SellPaymentOverlay({
 
   return (
     <>
+      {checkoutConflict && <div role="alertdialog" aria-modal="true" aria-label="Different saved order"
+        style={{ position: "fixed", inset: 0, zIndex: 1400, background: "rgba(0,0,0,.55)", display: "grid", placeItems: "center", padding: 16 }}>
+        <div style={{ background: "white", borderRadius: 8, padding: 24, maxWidth: 440, width: "100%", boxSizing: "border-box" }}>
+          <h2 style={{ fontSize: 20, marginTop: 0 }}>This cart differs from the saved order</h2>
+          <p>Saved order {checkoutConflict.bookingNumber}: {moneyFmt(checkoutConflict.totalAmount)}.</p>
+          <p>Current cart: {moneyFmt(draftPayment.totalAmount)}. Review these as separate orders before taking another payment.</p>
+          <p>The saved order and any payments stay separate. Review it in Find before collecting for that order again.</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="a-btn" onClick={onClose}>Back to cart</button>
+            {onSeparateSale && <button className="a-btn a-btn--primary" onClick={onSeparateSale}>Start separate sale</button>}
+          </div>
+        </div>
+      </div>}
       <CheckInPaymentModal
         booking={displayBooking}
         balanceDue={balanceDue}
@@ -741,7 +814,7 @@ export default function SellPaymentOverlay({
         method={paymentMethod}
         note={paymentNote}
         discount={paymentDiscount}
-        isSubmitting={creating || recordingExtra}
+        isSubmitting={creating || recordingExtra || recovering}
         complete={paymentComplete}
         onAmountChange={setPaymentAmount}
         onMethodChange={setPaymentMethod}
@@ -764,7 +837,7 @@ export default function SellPaymentOverlay({
           onClose={() => {
             setTerminalPayment(null);
             paymentLockRef.current = false;
-            if (!paymentComplete) toast.info("Card payment cancelled.");
+            if (!paymentComplete) toast.info("Order saved. The previous payment will be checked before retrying.");
           }}
           amount={terminalPayment.amount}
           locationId={getTerminal()?.locationId}
@@ -825,7 +898,16 @@ export default function SellPaymentOverlay({
           bookingId={pendingTerminal.bookingId}
           amount={pendingTerminal.amount}
           instructions={pendingTerminal.instructions}
-          onComplete={(data) => {
+          onComplete={async (data) => {
+            if (checkoutRecoveryKey) {
+              setPendingTerminal(null);
+              try {
+                await resumeSavedOrder();
+              } catch {
+                toast.error("Payment result received, but the order could not be refreshed. Check the saved order before collecting again.");
+              }
+              return;
+            }
             setPaymentComplete({
               ...(data?.data || data || {}),
               bookingId: pendingTerminal.bookingId,

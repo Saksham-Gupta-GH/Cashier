@@ -14,6 +14,9 @@ import { baseApi } from "../../api/baseApi";
 // supplies it explicitly.
 export const terminalApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
+    recoverTerminalCheckout: builder.query({
+      query: (key) => ({ url: "/payments/terminal/checkout", params: { key } }),
+    }),
     startTerminalPayment: builder.mutation({
       query: (body) => ({
         url: "/payments/terminal/start",
@@ -35,6 +38,7 @@ export const terminalApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useLazyRecoverTerminalCheckoutQuery,
   useStartTerminalPaymentMutation,
   useLazyGetTerminalStatusQuery,
   useCancelTerminalPaymentMutation,
