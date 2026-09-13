@@ -1410,6 +1410,11 @@ function CartRow({
         return { key, unitIndex, assigned, recipient };
       })
     : [];
+  const pricingComparison = item?.isVoucherPack
+    ? item?.voucherMeta?.pricingComparison
+    : null;
+  const regularValue = Number(pricingComparison?.regularValue) || 0;
+  const savings = Number(pricingComparison?.savings) || 0;
 
   return (
     <div style={{
@@ -1449,6 +1454,12 @@ function CartRow({
           </div>
         )}
         <div style={{ fontSize: 12, color: "var(--ink-500)" }}>{item.meta}</div>
+        {pricingComparison && regularValue > 0 && (
+          <div style={{ marginTop: 3, fontSize: 11, color: "var(--color-success, #15803D)", fontWeight: 700 }}>
+            Regular ${(regularValue * qty).toFixed(2)}
+            {savings > 0 ? ` · You save $${(savings * qty).toFixed(2)}` : ""}
+          </div>
+        )}
         {recipientRows.length > 0 && (
           <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
             {recipientRows.map(({ key, unitIndex, assigned, recipient }) => (

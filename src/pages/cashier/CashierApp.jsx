@@ -133,6 +133,7 @@ function normalizePresetSections(preset) {
       const productType = p.productType || p.type;
       const isVoucherPack = productType === "voucher_pack";
       const voucherMeta = isVoucherPack ? p.voucherMeta : null;
+      const pricingComparison = voucherMeta?.pricingComparison || null;
 
       // Voucher pack subtitle = inclusion summary (e.g. "5× Jump Pass + 1× Pizza")
       // or fall back to whatever description the activity has.
@@ -147,8 +148,8 @@ function normalizePresetSections(preset) {
       let badge;
       if (p.featured) {
         badge = "POPULAR";
-      } else if (isVoucherPack && voucherMeta?.savings > 0) {
-        badge = `SAVE $${Math.round(voucherMeta.savings)}`;
+      } else if (isVoucherPack && Number(pricingComparison?.savings) > 0) {
+        badge = `SAVE $${Number(pricingComparison.savings).toFixed(2)}`;
       } else if (isVoucherPack) {
         badge = "BUNDLE";
       }
@@ -1191,6 +1192,7 @@ export function CashierApp() {
       featured: productItem.featured,
       requiresWaiver: !!productItem.requiresWaiver,
       isVoucherPack: isVoucherPackItem(productItem),
+      voucherMeta: productItem.voucherMeta || null,
       taxOverride:
         productItem.taxOverride ||
         productItem.raw?.taxOverride ||

@@ -285,6 +285,11 @@ function ProductCard({ item, tone = "orange", onClick, busy = false }) {
   }[tone];
   const hasChoices = (item.variationOptions || []).length > 1;
   const requiresSchedule = needsScheduleSelection(item);
+  const pricingComparison = item?.isVoucherPack
+    ? item?.voucherMeta?.pricingComparison
+    : null;
+  const regularValue = Number(pricingComparison?.regularValue) || 0;
+  const savings = Number(pricingComparison?.savings) || 0;
 
   return (
     <button
@@ -336,6 +341,12 @@ function ProductCard({ item, tone = "orange", onClick, busy = false }) {
       <div className="display-num" style={{ fontSize: 24 }}>
         {Number.isFinite(item.price) ? `${hasChoices ? "From " : ""}$${Number(item.price).toFixed(2)}` : "-"}
       </div>
+      {pricingComparison && regularValue > 0 && (
+        <div style={{ fontSize: 11, color: "var(--ink-500)", fontWeight: 700 }}>
+          Regular ${regularValue.toFixed(2)}
+          {savings > 0 ? ` · Save $${savings.toFixed(2)}` : ""}
+        </div>
+      )}
     </button>
   );
 }
