@@ -2,6 +2,8 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import Cookies from "js-cookie";
 import { resolveCashierLocationId } from "../lib/locationContext";
 import { getTerminal } from "../lib/terminal";
+import { logout } from "../features/auth/authSlice";
+import { shouldEndCashierSession } from "../features/auth/authFailurePolicy";
 
 // Reads the API base from Vite env at build time:
 //   VITE_API_BASE_URL=http://localhost:5171/api/cashier
@@ -16,6 +18,8 @@ const rawBaseQuery = fetchBaseQuery({
     headers.set("X-Client-App", "cashier");
     const token = getState()?.auth?.token;
     if (token) headers.set("Authorization", `Bearer ${token}`);
+    const pairingToken = getTerminal()?.pairingToken;
+    if (pairingToken) headers.set("X-POS-Pairing-Token", pairingToken);
     return headers;
   },
 });
@@ -49,7 +53,11 @@ const baseQueryWithLocation = async (args, api, extraOptions) => {
       };
     }
   }
-  return rawBaseQuery(args, api, extraOptions);
+  const result = await rawBaseQuery(args, api, extraOptions);
+  if (state?.auth?.token && shouldEndCashierSession(result)) {
+    api.dispatch(logout());
+  }
+  return result;
 };
 
 export const baseApi = createApi({

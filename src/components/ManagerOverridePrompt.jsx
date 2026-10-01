@@ -2,7 +2,7 @@
 // authorising a restricted action. The cashier sees:
 //   • What the action is (apply expired promo, refund $X, void redeemed ticket…)
 //   • The reason the system blocked it
-//   • A 4-6 digit PIN pad
+//   • A 4-digit PIN pad
 //   • An optional reason note for the audit log
 //
 // On success the parent receives the audit row { auditId, managerName }
@@ -11,6 +11,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useVerifyManagerOverrideMutation } from "../features/authorization/managerOverrideApi";
+
+const PIN_LENGTH = 4;
 
 export default function ManagerOverridePrompt({
   open,
@@ -42,8 +44,8 @@ export default function ManagerOverridePrompt({
   if (!open) return null;
 
   const submit = async () => {
-    if (pin.length < 4) {
-      toast.error("PIN must be at least 4 digits");
+    if (pin.length !== PIN_LENGTH) {
+      toast.error("PIN must be exactly 4 digits");
       return;
     }
     setSubmitting(true);
@@ -132,7 +134,7 @@ export default function ManagerOverridePrompt({
           type="password"
           inputMode="numeric"
           pattern="[0-9]*"
-          maxLength={6}
+          maxLength={PIN_LENGTH}
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
@@ -190,7 +192,7 @@ export default function ManagerOverridePrompt({
           <button
             type="button"
             onClick={submit}
-            disabled={submitting || pin.length < 4}
+            disabled={submitting || pin.length !== PIN_LENGTH}
             className="a-btn a-btn--primary"
             style={{ flex: 1, justifyContent: "center" }}
           >

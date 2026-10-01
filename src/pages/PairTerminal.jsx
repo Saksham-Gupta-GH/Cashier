@@ -28,9 +28,13 @@ export default function PairTerminal({ onPaired }) {
     }
     try {
       const res = await pair({ code, appVersion: APP_VERSION }).unwrap();
-      const device = res?.data || res?.device || res?.terminal || res;
+      const device = res?.data;
       if (!device?.deviceId) {
         toast.error("Pairing succeeded but no device data returned");
+        return;
+      }
+      if (!device?.pairingToken) {
+        toast.error("Pairing succeeded but no secure device credential was returned. Ask a manager to generate a fresh code.");
         return;
       }
       setTerminal({
@@ -40,6 +44,7 @@ export default function PairTerminal({ onPaired }) {
         locationName: device.locationName,
         templateId: device.templateId,
         settings: device.settings || null,
+        pairingToken: device.pairingToken,
         pairedAt: new Date().toISOString(),
       });
       toast.success(`Paired to ${device.deviceName}`);

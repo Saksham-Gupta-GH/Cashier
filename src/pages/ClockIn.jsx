@@ -15,7 +15,7 @@ import { useGetClockInOptionsQuery, useClockInMutation } from "../features/auth/
 import { getTerminal, clearTerminal } from "../lib/terminal";
 import { appConfirm } from "../services/appDialog";
 
-const PIN_LENGTH = 4; // accept 4–6 server-side; UX optimised for 4
+const PIN_LENGTH = 4;
 
 const initialsOf = (u) =>
   `${(u.firstName || "")[0] || ""}${(u.lastName || "")[0] || ""}`.toUpperCase();
@@ -25,7 +25,7 @@ const colorFor = (u) => PALETTE[(((u.firstName || "?").charCodeAt(0) || 0) + (u.
 
 export default function ClockIn({ onUseEmailLogin }) {
   const terminal = getTerminal();
-  const { data, isLoading, error } = useGetClockInOptionsQuery(terminal?.deviceId, {
+  const { data, isLoading, error, refetch } = useGetClockInOptionsQuery(terminal?.deviceId, {
     skip: !terminal?.deviceId,
   });
   const [clockIn, { isLoading: isSubmitting }] = useClockInMutation();
@@ -38,14 +38,8 @@ export default function ClockIn({ onUseEmailLogin }) {
     if (!picked) setPin("");
   }, [picked]);
 
-  // Auto-submit on full PIN
-  useEffect(() => {
-    if (picked && pin.length >= PIN_LENGTH) submit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin, picked]);
-
   const submit = async () => {
-    if (!picked || !pin) return;
+    if (!picked || pin.length !== PIN_LENGTH) return;
     try {
       await clockIn({
         deviceId: terminal.deviceId,
@@ -65,8 +59,11 @@ export default function ClockIn({ onUseEmailLogin }) {
     }
   };
 
-  const tap = (digit) => setPin((p) => (p.length < 6 ? p + digit : p));
+  const tap = (digit) => setPin((p) => (p.length < PIN_LENGTH ? p + digit : p));
   const back = () => setPin((p) => p.slice(0, -1));
+  const pairingRejected =
+    error?.status === 401 &&
+    String(error?.data?.error || "").toLowerCase().includes("pairing");
 
   return (
     <div
@@ -114,30 +111,31 @@ export default function ClockIn({ onUseEmailLogin }) {
               Tap your tile to clock in
             </div>
             <div style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 18 }}>
-              {users.length > 0 ? `${users.length} staff` : "Loading staff…"}
+              {users.length > 0
+                ? `${users.length} staff`
+                : isLoading
+                  ? "Loading staff…"
+                  : error
+                    ? "Staff list unavailable"
+                    : "No eligible staff"}
             </div>
 
             {isLoading && <div style={{ padding: 32, textAlign: "center", color: "var(--ink-500)" }}>Loading…</div>}
 
             {error && (
-              <div
-                style={{
-                  padding: 16,
-                  background: "var(--color-danger-soft)",
-                  border: "1.5px solid var(--color-danger)",
-                  borderRadius: 12,
-                  color: "var(--color-danger)",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  marginBottom: 16,
+              <StaffLoadError
+                error={error}
+                pairingRejected={pairingRejected}
+                onRetry={refetch}
+                onPairAgain={() => {
+                  clearTerminal();
+                  window.location.reload();
                 }}
-              >
-                Couldn't load staff list. {error?.data?.error || "Check the connection."}
-              </div>
+              />
             )}
 
-            {!isLoading && users.length === 0 && (
-              <EmptyState onUseEmailLogin={onUseEmailLogin} />
+            {!isLoading && !error && users.length === 0 && (
+              <EmptyState />
             )}
 
             <div
@@ -215,6 +213,7 @@ export default function ClockIn({ onUseEmailLogin }) {
             pin={pin}
             tap={tap}
             back={back}
+            onSubmit={submit}
             onCancel={() => { setPicked(null); setPin(""); }}
             isSubmitting={isSubmitting}
           />
@@ -298,7 +297,7 @@ function TerminalBar({ terminal, onSwitch }) {
   );
 }
 
-function PinPad({ user, pin, tap, back, onCancel, isSubmitting }) {
+function PinPad({ user, pin, tap, back, onSubmit, onCancel, isSubmitting }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20 }}>
       {/* Picked staff */}
@@ -334,7 +333,7 @@ function PinPad({ user, pin, tap, back, onCancel, isSubmitting }) {
           {user.firstName} {user.lastName}
         </div>
         <div style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600 }}>
-          Enter your PIN
+          Enter your 4-digit PIN
         </div>
       </div>
 
@@ -362,7 +361,19 @@ function PinPad({ user, pin, tap, back, onCancel, isSubmitting }) {
         <PadButton onClick={onCancel} disabled={isSubmitting} muted>✕</PadButton>
       </div>
 
-      {isSubmitting && <div style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600 }}>Signing in…</div>}
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={isSubmitting || pin.length !== PIN_LENGTH}
+        className="a-btn a-btn--primary"
+        style={{ width: 236, justifyContent: "center", marginBottom: 10 }}
+      >
+        {isSubmitting ? "Signing in…" : "Clock in"}
+      </button>
+
+      <div style={{ fontSize: 11, color: "var(--ink-400)", fontWeight: 600 }}>
+        Enter all 4 digits, then tap Clock in
+      </div>
     </div>
   );
 }
@@ -397,7 +408,43 @@ function PadButton({ children, onClick, disabled, muted }) {
   );
 }
 
-function EmptyState({ onUseEmailLogin }) {
+function StaffLoadError({ error, pairingRejected, onRetry, onPairAgain }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: 18,
+        background: "var(--color-danger-soft)",
+        border: "1.5px solid var(--color-danger)",
+        borderRadius: 12,
+        color: "var(--ink-900)",
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 5 }}>
+        {pairingRejected ? "This terminal needs to be paired again" : "Staff list couldn't be loaded"}
+      </div>
+      <div style={{ color: "var(--ink-600)", fontSize: 12.5, lineHeight: 1.45 }}>
+        {pairingRejected
+          ? "The saved terminal credential is missing, expired, or was revoked by a manager."
+          : error?.data?.error || "Check the connection and try again."}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+        {pairingRejected ? (
+          <button type="button" onClick={onPairAgain} className="a-btn a-btn--primary a-btn--sm">
+            Pair terminal again
+          </button>
+        ) : (
+          <button type="button" onClick={onRetry} className="a-btn a-btn--primary a-btn--sm">
+            Try again
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
   return (
     <div
       style={{
@@ -409,20 +456,13 @@ function EmptyState({ onUseEmailLogin }) {
       }}
     >
       <div style={{ fontWeight: 800, color: "var(--ink-900)", marginBottom: 8 }}>
-        No staff configured for this terminal
+        No eligible staff for this location
       </div>
       <div style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 14 }}>
-        A manager needs to enable POS access + set a PIN for cashier-role users from the admin app:
+        A manager needs to assign the user to this location, enable POS access, and set a PIN in the admin app:
         <br />
-        <em>Settings → Users → edit a user → set "POS user" + PIN</em>
+        <em>Users → edit a user → Cashier (POS) access</em>
       </div>
-      <button
-        type="button"
-        onClick={onUseEmailLogin}
-        className="a-btn a-btn--ghost a-btn--sm"
-      >
-        Use email + password instead
-      </button>
     </div>
   );
 }
