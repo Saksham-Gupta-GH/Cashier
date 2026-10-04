@@ -492,7 +492,7 @@ function AddOnSuggestionPopup({ suggestions, cartCounts, onAdd, position, onMove
                 gap: 8,
                 padding: "8px 10px",
                 border: inCart > 0 ? "1.5px solid var(--aero-orange-500)" : "1.5px solid var(--ink-200)",
-                background: inCart > 0 ? "var(--aero-orange-50, #FFF1E8)" : "white",
+                background: inCart > 0 ? "var(--aero-orange-50, #F2EDFF)" : "white",
                 color: inCart > 0 ? "var(--aero-orange-700)" : "var(--ink-900)",
                 borderRadius: 10,
                 fontSize: 13,
@@ -2420,10 +2420,10 @@ export function CashierApp() {
       >
         <div style={{ marginBottom: 20 }}>
           <svg width={48} height={48} viewBox="0 0 120 120" fill="none">
-            <rect x="2" y="2" width="116" height="116" rx="28" fill="#1A1814" />
-            <circle cx="60" cy="74" r="30" stroke="#FFCF1F" strokeWidth="6" />
-            <path d="M60 24 L86 70 H73.5 L70.5 63 H49.5 L46.5 70 H34 L60 24 Z M54 53 H66 L60 39 L54 53 Z" fill="#F45B0A" />
-            <circle cx="60" cy="98" r="5" fill="#6A40F5" />
+            <rect x="2" y="2" width="116" height="116" rx="28" fill="#1D1829" />
+            <circle cx="60" cy="74" r="30" stroke="#18B8C9" strokeWidth="6" />
+            <path d="M60 24 L86 70 H73.5 L70.5 63 H49.5 L46.5 70 H34 L60 24 Z M54 53 H66 L60 39 L54 53 Z" fill="#7220E6" />
+            <circle cx="60" cy="98" r="5" fill="#7220E6" />
           </svg>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0, width: "100%", padding: "0 8px", overflowY: "auto" }}>

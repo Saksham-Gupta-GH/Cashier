@@ -129,7 +129,7 @@ export default function SettingsPage() {
                   gap: 8,
                   padding: "10px 16px",
                   borderRadius: 12,
-                  background: "var(--aero-orange-500, #F45B0A)",
+                  background: "var(--aero-orange-500, #7220E6)",
                   color: "white",
                   fontWeight: 800,
                   fontSize: 13,
