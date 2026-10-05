@@ -17,7 +17,7 @@ import {
 // point at different download endpoints.
 const SIDECAR_DOWNLOAD_URL =
   import.meta.env.VITE_SIDECAR_DOWNLOAD_URL ||
-  "https://github.com/manglesh1/Cashier/releases/latest";
+  "https://github.com/manglesh1/movira-cashier/releases/latest";
 
 // Helper: read the paired terminal blob for location wristband mode.
 const readTerminal = () => {
