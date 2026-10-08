@@ -98,8 +98,7 @@ const SECTION_ICON_MAP = {
   jump: "ticket",
   pass: "ticket",
   party: "cake",
-  addon: "plus-circle",
-  add_ons: "plus-circle",
+  add_on: "plus-circle",
   food: "cookie",
   snack: "cookie",
   drink: "cup-soda",
@@ -232,9 +231,7 @@ const NO_SCHEDULE_CHECKOUT_TYPES = new Set([
 // item. Strip clears automatically when the cart empties (i.e. after
 // payment completes and clearCart() fires).
 const ADDON_PRODUCT_TYPES = new Set([
-  "addon",
   "add_on",
-  "add_ons",
   "stock_item",
 ]);
 
@@ -756,6 +753,9 @@ export function CashierApp() {
     Cookies.set("locationId", pairedLocationId, { expires: 2 / 24 });
   }
   const locationId = Cookies.get("locationId");
+  const locationCountry = (locations || []).find(
+    (location) => String(location.locationId) === String(pairedLocationId || locationId)
+  )?.country || "Canada";
 
   const dispatch = useDispatch();
   const [logoutCall] = useLogoutMutation();
@@ -2112,7 +2112,7 @@ export function CashierApp() {
     toast.success(
       autoFinish
         ? "Redeem items loaded. Complete the zero-balance booking from the cart."
-        : "Redeem items loaded in Sell. Add extras, then complete payment."
+        : "Redeem items loaded in Sell. Add optional items, then complete payment."
     );
   };
 
@@ -2135,8 +2135,8 @@ export function CashierApp() {
     return out;
   }, [sections]);
 
-  // The strip should show ONLY when there's a primary (non-addon) item
-  // in the cart. Otherwise an empty cart or an all-addon cart shouldn't
+  // The strip should show ONLY when there's a primary (non-add-on) item
+  // in the cart. Otherwise an empty cart or an all-add-on cart shouldn't
   // surface more upsell — the cashier is mid-checkout for a single line.
   const cartHasPrimaryItem = useMemo(
     () => items.some((line) => !isAddOnItem(line)),
@@ -2515,6 +2515,7 @@ export function CashierApp() {
           needed={items.reduce((n, it) => n + (it.requiresWaiver ? it.qty : 0), 0)}
           attached={waiversAttached}
           customer={cartCustomer}
+          locationCountry={locationCountry}
           onChange={(next) => {
             setWaiversAttached(next);
             setCartCustomer((current) => current || next[0] || null);

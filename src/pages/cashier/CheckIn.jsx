@@ -2846,7 +2846,7 @@ function OrderAddItemModal({ bookingId, onAdd, onClose }) {
           <div>
             <div style={{ fontSize: 18, fontWeight: 900, color: "var(--ink-900)" }}>Add item</div>
             <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 2 }}>
-              Add extras or stock items to this booking order.
+              Choose add-ons or inventory items for this booking order.
             </div>
           </div>
           <button type="button" onClick={onClose} style={{ all: "unset", cursor: "pointer", padding: 4 }}>
@@ -2856,7 +2856,7 @@ function OrderAddItemModal({ bookingId, onAdd, onClose }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
           {[
-            ["recommended", "Party extras"],
+            ["recommended", "Recommended add-ons"],
             ["all", "All products"],
           ].map(([key, label]) => (
             <button
@@ -2902,7 +2902,7 @@ function OrderAddItemModal({ bookingId, onAdd, onClose }) {
             <div style={{ padding: 22, textAlign: "center", color: "var(--ink-500)" }}>Loading...</div>
           ) : rows.length === 0 ? (
             <div style={{ padding: 22, textAlign: "center", color: "var(--ink-500)" }}>
-              {tab === "recommended" ? "No party extras are configured for this booking." : "No products found."}
+              {tab === "recommended" ? "No add-ons are configured for this booking." : "No products found."}
             </div>
           ) : (
             rows.map((item) => {
